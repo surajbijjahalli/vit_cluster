@@ -11,7 +11,6 @@ import matplotlib.image as mpimg
 from tqdm import tqdm
 import pandas as pd
 #from sklearn.cluster import HDBSCAN
-import csv
 
 #import umap
 #%%
@@ -36,7 +35,6 @@ import dino.vision_transformer as vits
 
 parser = argparse.ArgumentParser("Visualize Self-Attention maps")
 parser.add_argument("--path",type=str,help="path to dataset")
-parser.add_argument("--output",type=str,help="name of output file")
 
 
 
@@ -226,9 +224,6 @@ ground_truth_available = False
 args = parser.parse_args()
 
 path_to_dir = args.path
-
-path_to_dir_reference = '/media/surajb/suraj_drive/datasets-acfr/lizard_island_03_22/images_trimodal/'
-path_to_dir_target = '/media/surajb/suraj_drive/datasets-acfr/lizard_island_03_22/i20220403_000804_cv_northreef/'
 #path_to_dir = 'resized_output'
 
 dataset,dataloader,image_paths = load_dataset_dataloader(path_to_dir)
@@ -274,101 +269,93 @@ attn_conc_list = []
 rescaled_eigenvector_list = []
 start_time = time.time() 
 pbar = tqdm(dataset)
-with open(str(args.output),'a') as f1: # with open('test_csv.csv','a') as f1: 
-    for im_id, inp in enumerate(pbar):
+for im_id, inp in enumerate(pbar):
 
-        # ------------ IMAGE PROCESSING -------------------------------------------
-        img = inp['image']
+    # ------------ IMAGE PROCESSING -------------------------------------------
+    img = inp['image']
 
-        init_image_size = img.shape
+    init_image_size = img.shape
 
-        # Get the name of the image
-        im_name = inp['name']
-        # Pass in case of no gt boxes in the image
-        if im_name is None:
-            continue
+    # Get the name of the image
+    im_name = inp['name']
+    # Pass in case of no gt boxes in the image
+    if im_name is None:
+        continue
 
-        # Padding the image with zeros to fit multiple of patch-size
-        size_im = (
-            img.shape[0],
-            int(np.floor(img.shape[1] / patch_size) * patch_size),
-            int(np.floor(img.shape[2] / patch_size) * patch_size),
+    # Padding the image with zeros to fit multiple of patch-size
+    size_im = (
+        img.shape[0],
+        int(np.floor(img.shape[1] / patch_size) * patch_size),
+        int(np.floor(img.shape[2] / patch_size) * patch_size),
+    )
+
+    img = img[:,:,:size_im[2]]
+   
+    # # Move to gpu
+    if device == torch.device('cuda'):
+        img = img.cuda(non_blocking=True)
+    # Size for transformers
+    w_featmap = img.shape[-2] // patch_size
+    h_featmap = img.shape[-1] // patch_size
+
+    # ------------ GROUND-TRUTH -------------------------------------------
+    
+    # ------------ EXTRACT FEATURES -------------------------------------------
+    with torch.no_grad():
+
+        # ------------ FORWARD PASS -------------------------------------------
+        
+        # Store the outputs of qkv layer from the last attention layer
+        feat_out = {}
+        def hook_fn_forward_qkv(module, input, output):
+            feat_out["qkv"] = output
+        model._modules["blocks"][-1]._modules["attn"]._modules["qkv"].register_forward_hook(hook_fn_forward_qkv)
+
+        # Forward pass in the model
+        attentions = model.get_last_selfattention(img[None, :, :, :]) # attentions = model.get_last_selfattention(img[None, :, :, :])
+
+        # Scaling factor
+        scales = [patch_size, patch_size]
+
+        # Dimensions
+        nb_im = attentions.shape[0]  # Batch size
+        nh = attentions.shape[1]  # Number of heads
+        nb_tokens = attentions.shape[2]  # Number of tokens
+
+        # Baseline: compute DINO segmentation technique proposed in the DINO paper
+        # and select the biggest component
+        
+        # Extract the qkv features of the last attention layer
+        qkv = (
+            feat_out["qkv"]
+            .reshape(nb_im, nb_tokens, 3, nh, -1 // nh)
+            .permute(2, 0, 3, 1, 4)
         )
+        q, k, v = qkv[0], qkv[1], qkv[2]
+        k = k.transpose(1, 2).reshape(nb_im, nb_tokens, -1)
+        q = q.transpose(1, 2).reshape(nb_im, nb_tokens, -1)
+        v = v.transpose(1, 2).reshape(nb_im, nb_tokens, -1)
 
-        img = img[:,:,:size_im[2]]
+        feats = k
+   
+
+    # ------------ Apply TokenCut ------------------------------------------- 
     
-        # # Move to gpu
-        if device == torch.device('cuda'):
-            img = img.cuda(non_blocking=True)
-        # Size for transformers
-        w_featmap = img.shape[-2] // patch_size
-        h_featmap = img.shape[-1] // patch_size
-
-        # ------------ GROUND-TRUTH -------------------------------------------
-        
-        # ------------ EXTRACT FEATURES -------------------------------------------
-        with torch.no_grad():
-
-            # ------------ FORWARD PASS -------------------------------------------
-            
-            # Store the outputs of qkv layer from the last attention layer
-            feat_out = {}
-            def hook_fn_forward_qkv(module, input, output):
-                feat_out["qkv"] = output
-            model._modules["blocks"][-1]._modules["attn"]._modules["qkv"].register_forward_hook(hook_fn_forward_qkv)
-
-            # Forward pass in the model
-            attentions = model.get_last_selfattention(img[None, :, :, :]) # attentions = model.get_last_selfattention(img[None, :, :, :])
-
-            # Scaling factor
-            scales = [patch_size, patch_size]
-
-            # Dimensions
-            nb_im = attentions.shape[0]  # Batch size
-            nh = attentions.shape[1]  # Number of heads
-            nb_tokens = attentions.shape[2]  # Number of tokens
-
-            # Baseline: compute DINO segmentation technique proposed in the DINO paper
-            # and select the biggest component
-            
-            # Extract the qkv features of the last attention layer
-            qkv = (
-                feat_out["qkv"]
-                .reshape(nb_im, nb_tokens, 3, nh, -1 // nh)
-                .permute(2, 0, 3, 1, 4)
-            )
-            q, k, v = qkv[0], qkv[1], qkv[2]
-            k = k.transpose(1, 2).reshape(nb_im, nb_tokens, -1)
-            q = q.transpose(1, 2).reshape(nb_im, nb_tokens, -1)
-            v = v.transpose(1, 2).reshape(nb_im, nb_tokens, -1)
-
-            feats = k
+    #pred, objects, foreground, seed , bins, eigenvector,all_eigenvectors,eigenvals,bipartition,cls_token,cost,bbox_area,_,_ = ncut(feats, [w_featmap, h_featmap], scales, init_image_size, tau=0.2, eps=1e-5, im_name=im_name, no_binary_graph=False)
+    pred, objects, foreground, seed , bins, eigenvector,all_eigenvectors,bipartition,cls_token,rescaled_bipartition,rescaled_eigenvector = ncut(feats, [w_featmap, h_featmap], scales, init_image_size, tau=0.1, eps=1e-5, im_name=im_name, no_binary_graph=False)  
     
-
-        # ------------ Apply TokenCut ------------------------------------------- 
-        
-        #pred, objects, foreground, seed , bins, eigenvector,all_eigenvectors,eigenvals,bipartition,cls_token,cost,bbox_area,_,_ = ncut(feats, [w_featmap, h_featmap], scales, init_image_size, tau=0.2, eps=1e-5, im_name=im_name, no_binary_graph=False)
-        pred, objects, foreground, seed , bins, eigenvector,all_eigenvectors,bipartition,cls_token,rescaled_bipartition,rescaled_eigenvector = ncut(feats, [w_featmap, h_featmap], scales, init_image_size, tau=0.1, eps=1e-5, im_name=im_name, no_binary_graph=False)  
-        
-        #diff_attn = np.square(rescaled_eigenvector_list[610]-rescaled_eigenvector_list[611])
+    #diff_attn = np.square(rescaled_eigenvector_list[610]-rescaled_eigenvector_list[611])
     
-        #cls_list.append(np.squeeze(cls_token))
-        
-        
-        writer=csv.writer(f1)
-            
-        row =np.append(args.path+im_name,np.array(cls_token)) 
-        writer.writerow(row)
+    second_eigen_vector.append(np.squeeze(all_eigenvectors[:,1]))
+    cls_list.append(np.squeeze(cls_token))
+    rescaled_eigenvector_list.append(rescaled_eigenvector)
+    im_name_list.append(im_name)
+    
+    cnt+=1
 
-        #im_name_list.append(im_name)
-        
-        cnt+=1
-
-        #cls_token_array[im_id,:]=cls_token
-    end_time = time.time()
+    #cls_token_array[im_id,:]=cls_token
+end_time = time.time()
 print(f'Time cost: {str(datetime.timedelta(milliseconds=int((end_time - start_time)*1000)))}')
-
-
 #%%
 # Place data in dataframes
 #cls tokens
@@ -392,7 +379,7 @@ second_eigen_data['image_name'] = im_name_list
 
 
 # write cls_data to csv file (store data in case of crash)
-cls_dataframe.to_csv('crawler_features.csv')
+cls_dataframe.to_csv('resort_tags.csv')
 
 
 
@@ -408,12 +395,6 @@ if ground_truth_available:
 else:
      merged_dataframe = cls_dataframe  
 
-#%%
-
-# Sort merged dataframe in ascending order of time
-sorted_merged_dataframe = merged_dataframe.sort_values(by=['time'],ascending=True)
-#%%
-time_sorted_eigen_vectors = [rescaled_eigenvector_list[i] for i in sorted_merged_dataframe.index.values]
 
 #%% Reduce feature dimensions using tsne
 
@@ -425,7 +406,7 @@ tsne = TSNE(n_components=2,
     metric="cosine",
     n_jobs=8,
     random_state=42,
-    verbose=True,initial_momentum=0.5,final_momentum=0.8,dof=0.2
+    verbose=True,initial_momentum=0.5,final_momentum=0.8,dof=0.9
 )
 '''
 umap_reducer = umap.UMAP(n_neighbors=30,

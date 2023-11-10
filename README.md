@@ -7,3 +7,12 @@ Can be run as-is or deployed using a docker image. Developed to cluster large un
 The images can be overlaid on their embeddings to better understand the latent space. 
 
 ![image overlay](/assets/image_overlay.png)
+
+## Usage 
+
+* Build the docker image
+	 `docker build -t name_of_image:tag .`
+* In `run_docker.sh` Change the file path of the mounted volume to your directory containing the images to be clustered.
+* Run the container:
+	`./run_docker.sh`
+	

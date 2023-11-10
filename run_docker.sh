@@ -1,2 +1,2 @@
-docker run -it --rm -v $PWD/resized_output:/post_mission_analysis/resized_output/ -t post_mission_docker_mod bash
+docker run -it --rm -v /media/surajb/suraj_drive/flinders_crawler_rosbags/crawler_hmi_2023_07_17_02_07_50/output_images:/post_mission_analysis/crawler_images/ -t post_mission_analysis bash
 

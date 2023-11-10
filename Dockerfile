@@ -6,16 +6,17 @@ RUN apt-get update -y && apt-get upgrade -y && \
 
 WORKDIR /post_mission_analysis
 
-COPY main.py .
+COPY main_tokencut_dataset_jervis.py .
+COPY main_tokencut_dataset_jervis_hdbscan.py .
 COPY object_discovery.py .
 COPY datasets.py .
 COPY networks.py .
-COPY requirements.txt .
+COPY requirements .
 COPY dino_deitsmall16_pretrain.pth .
 COPY datasets.py .
 COPY dino ./dino
-COPY outputs ./outputs
-#COPY resized_output ./resized_output
+RUN mkdir outputs
+
 
 RUN pip install -r requirements.txt
 
